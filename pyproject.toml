@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpu-spectral-clustering"
+version = "0.1.0"
+description = "GPU-accelerated spectral clustering with PyTorch"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "torch",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
