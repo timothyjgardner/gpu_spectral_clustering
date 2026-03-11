@@ -306,6 +306,10 @@ python benchmark.py --sizes 1000000,5000000,10000000 --methods twostage
 python benchmark.py --sizes 100000 --dim 256 --n-clusters 20 --n-neighbors 50
 ```
 
+## Acknowledgments
+
+Vibe-coded by Claude Opus 4.6 with orchestration by Tim Gardner.
+
 ## License
 
 MIT
