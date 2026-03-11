@@ -12,6 +12,36 @@ This library replaces the expensive steps with GPU-accelerated alternatives:
 - **Batched GPU k-NN** via `torch.cdist`, keeping memory at O(batch_size x n) instead of O(n^2).
 - **Two approximate variants** (Nystrom and Two-stage) that reduce the eigendecomposition to a small subsample, enabling spectral clustering on 10M+ points in seconds.
 
+## Differences from sklearn SpectralClustering
+
+The mathematical framework is standard spectral clustering (affinity graph, normalized Laplacian, eigen-embedding, KMeans). The key differences are engineering choices that enable the ~1000x speedup at scale:
+
+### Sparse k-NN affinity instead of dense RBF affinity
+
+sklearn builds a **dense** n x n affinity matrix using a Gaussian RBF kernel between *every* pair of points — O(n^2) memory and computation. This library builds a **sparse** affinity matrix by only connecting each point to its `n_neighbors` nearest neighbors, stored in CSR format with O(n * k) nonzero entries.
+
+### GPU-batched k-NN instead of CPU pairwise distances
+
+sklearn computes pairwise distances on CPU via numpy/scipy. This library does it on GPU using `torch.cdist` in batches of `batch_size` query rows at a time, keeping peak GPU memory at O(batch_size * n) rather than O(n^2).
+
+### Adaptive bandwidth via median heuristic
+
+sklearn uses a fixed `gamma` parameter for the RBF kernel (defaulting to `1/n_features`). This library sets sigma automatically to the **median of all k-NN distances**, a common heuristic that adapts to the data's intrinsic scale without tuning.
+
+### Equivalent Laplacian formulation
+
+Both use the symmetric normalized Laplacian, but with a minor algebraic shortcut:
+
+- sklearn computes **L = I - D^{-1/2} W D^{-1/2}** and finds the *smallest* eigenvectors (closest to 0).
+- This library computes **L = D^{-1/2} W D^{-1/2}** (omitting the I -) and finds the *largest* eigenvectors via `eigsh(..., which='LM')`.
+
+These are mathematically equivalent — the largest eigenvectors of D^{-1/2} W D^{-1/2} correspond to the smallest eigenvectors of I - D^{-1/2} W D^{-1/2}.
+
+### What stays the same
+
+- **Sparse eigendecomposition**: Both use `scipy.sparse.linalg.eigsh` (ARPACK).
+- **Row-normalization + KMeans**: Both L2-normalize the eigenvector embedding and run KMeans to get final labels (the Ng-Jordan-Weiss recipe).
+
 ## Package structure
 
 ```
