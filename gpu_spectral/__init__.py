@@ -1,6 +1,7 @@
 """gpu_spectral — GPU-accelerated spectral clustering with PyTorch."""
 
 from .knn import gpu_knn, gpu_knn_cross
+from .merge import merge_clusters
 from .spectral import (
     GPUSpectral,
     NystromSpectral,
@@ -15,4 +16,5 @@ __all__ = [
     "GPUSpectral",
     "NystromSpectral",
     "TwoStageSpectral",
+    "merge_clusters",
 ]

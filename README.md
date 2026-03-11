@@ -48,12 +48,15 @@ These are mathematically equivalent — the largest eigenvectors of D^{-1/2} W D
 gpu_spectral/
 ├── __init__.py       # Public API: imports all classes and functions
 ├── knn.py            # GPU k-NN primitives (gpu_knn, gpu_knn_cross)
-└── spectral.py       # Clustering classes (GPUSpectral, NystromSpectral, TwoStageSpectral)
+├── spectral.py       # Clustering classes (GPUSpectral, NystromSpectral, TwoStageSpectral)
+└── merge.py          # Transition-based cluster merging for sequential data
 ```
 
 - **`knn.py`** contains two functions that are the GPU workhorses. They move data to the GPU, compute L2 distances in batches using `torch.cdist`, extract top-k nearest neighbors via `torch.topk`, and return numpy arrays. The batch loop ensures that only `batch_size` rows of the full distance matrix are materialized at once.
 
 - **`spectral.py`** implements three clustering classes plus the shared `spectral_core` function. Each class follows the scikit-learn convention of exposing a `.fit_predict(X)` method that accepts a numpy array and returns integer cluster labels.
+
+- **`merge.py`** provides post-hoc cluster merging for sequential/temporal data. When spectral clustering over-segments (e.g. splitting one state into multiple phase-based sub-clusters), this module identifies which clusters should be merged by analyzing how frequently the system transitions between them.
 
 ## Installation
 
@@ -169,6 +172,67 @@ All three methods share these parameters:
 2. **100K < n < 2M** — Use `NystromSpectral` for near-exact quality.
 3. **n > 2M** — Use `TwoStageSpectral` for speed. Consider validating on a subsample with `GPUSpectral` first.
 4. **Unsure** — Start with `TwoStageSpectral` (fast feedback), then upgrade to `NystromSpectral` if quality matters.
+
+### Transition-based cluster merging (`merge.py`)
+
+When clustering sequential or time-series data, spectral clustering often over-segments: a single underlying state (e.g. one oscillatory mode) gets split into multiple sub-clusters representing different phases of that state. The merge module identifies and recombines these fragments.
+
+**The key insight:** If two clusters belong to the same underlying state, the system will transition between them frequently. Clusters belonging to *different* states will have rare inter-transitions.
+
+**Algorithm:**
+
+1. **Build transition matrix**: Walk through the label sequence and count how often the system moves from cluster *i* to cluster *j* at consecutive timesteps. If the data is formed by concatenating fixed-length windows (e.g. from sliding-window feature extraction), transitions at window boundaries are skipped via the `seq_len` parameter to avoid counting spurious cross-window transitions.
+
+2. **Compute transition probabilities**: Row-normalize the count matrix to get transition probabilities P[i,j] = P(next=j | current=i).
+
+3. **Symmetrize to similarity**: Compute S = (P + P^T) / 2. This symmetrized probability serves as a similarity measure — high S[i,j] means clusters i and j frequently transition to each other in both directions.
+
+4. **Hierarchical merging**: Convert similarity to distance (D = 1 - S), then run agglomerative clustering with average linkage (`scipy.cluster.hierarchy.linkage`) to build a merge dendrogram. Cut the dendrogram at `n_merge` groups.
+
+5. **Relabel**: Map all original labels through the merge map to produce contiguous 0-indexed merged labels.
+
+**Parameters:**
+
+- `n_merge` — Target number of clusters after merging. If the original clustering found 15 clusters but the true number of states is 10, set `n_merge=10`.
+- `seq_len` — Length of each contiguous window in the label sequence. Set this if your labels come from concatenated sliding windows (e.g. `seq_len=1024`). If the label sequence is one continuous stream, leave as `None`.
+- `method` — Linkage method for hierarchical clustering (default: `'average'`). Other options: `'single'`, `'complete'`, `'ward'`.
+
+**Usage:**
+
+```python
+from gpu_spectral import TwoStageSpectral, merge_clusters
+
+# Over-cluster intentionally
+labels = TwoStageSpectral(n_clusters=15, n_subsample=10000).fit_predict(X)
+
+# Merge down to the true number of states
+merged_labels, info = merge_clusters(labels, n_merge=10, seq_len=1024)
+
+print(f"Before: {info['k_before']} clusters → After: {info['k_after']} clusters")
+print(f"Merge map: {info['merge_map']}")  # merge_map[old_label] = new_label
+
+# Transition matrices are available for visualization
+T_before = info['T_before']  # (15, 15) count matrix
+T_after = info['T_after']    # (10, 10) count matrix
+```
+
+**When to use:** Any time you're clustering representations extracted from sequential data (time series, text, video frames, audio) and suspect the clustering is too fine-grained. The transition structure reveals the natural groupings that pure geometry might miss.
+
+**Lower-level access:**
+
+```python
+from gpu_spectral.merge import (
+    build_transition_matrix,
+    transition_to_probability,
+    merge_by_transitions,
+    apply_merge,
+)
+
+T = build_transition_matrix(labels, seq_len=1024)
+P = transition_to_probability(T)
+merge_map = merge_by_transitions(T, n_merge=10)
+merged_labels = apply_merge(labels, merge_map)
+```
 
 ## Quick start
 
@@ -292,6 +356,34 @@ Nystrom-approximated spectral clustering with `n_landmarks` landmark points.
 **`TwoStageSpectral(n_clusters, n_neighbors=30, seed=42, n_subsample=10000)`**
 
 Two-stage spectral: exact spectral on `n_subsample` points, then k-NN propagation.
+
+### Merge functions
+
+**`merge_clusters(labels, n_merge, seq_len=None, method='average')`**
+
+End-to-end cluster merging for sequential data. Builds a transition matrix, merges clusters by transition similarity, and relabels.
+
+- **labels**: ndarray of shape (n,), int — cluster label per timestep.
+- **n_merge**: Target number of clusters after merging.
+- **seq_len**: Window length; transitions at boundaries are skipped. None for continuous sequences.
+- **method**: Linkage method ('average', 'single', 'complete', 'ward').
+- **Returns**: Tuple of (merged_labels, info_dict). The info dict contains `'T_before'`, `'T_after'`, `'merge_map'`, `'k_before'`, `'k_after'`.
+
+**`build_transition_matrix(labels, seq_len=None)`**
+
+Count transitions between consecutive labels. Returns (k, k) count matrix.
+
+**`transition_to_probability(T)`**
+
+Row-normalize counts to probabilities. Returns (k, k) stochastic matrix.
+
+**`merge_by_transitions(T, n_merge, method='average')`**
+
+Hierarchical merging on transition similarity. Returns merge_map array of shape (k,).
+
+**`apply_merge(labels, merge_map)`**
+
+Remap labels through a merge map. Returns relabeled array.
 
 ## Benchmark script
 
