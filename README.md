@@ -408,7 +408,7 @@ Vibe-coded by Claude Opus 4.6 with orchestration by Tim Gardner.
 
 This figure compares three clustering approaches on UMAP-projected latent representations from [TweetyBERT](https://github.com/birdsonganalysis/tweetybert) (bird USA5288). The latent vectors are L2-normalized before clustering so that the GPU spectral methods operate on cosine similarity.
 
-- **Left — HDBSCAN** (28 labels including noise): The baseline density-based clustering. HDBSCAN finds variable-density clusters but leaves many points as noise (unlabeled) and tends to fragment sparse regions.
+- **Left — HDBSCAN** (28 labels including noise): The baseline density-based clustering, run on a 6-dimensional UMAP embedding of the latent space. HDBSCAN finds variable-density clusters but leaves many points labeled as noise.
 
 - **Center — Cosine Spectral** (100 clusters, k=30): `TwoStageSpectral` with 100 clusters on the L2-normalized latents. Over-clustering intentionally produces many small, pure clusters that respect fine-grained spectral structure.
 
