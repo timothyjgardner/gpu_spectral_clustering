@@ -402,6 +402,28 @@ python benchmark.py --sizes 100000 --dim 256 --n-clusters 20 --n-neighbors 50
 
 Vibe-coded by Claude Opus 4.6 with orchestration by Tim Gardner.
 
+## Example: Birdsong latent space clustering
+
+![3-panel UMAP comparison of clustering methods on TweetyBERT latent space](umap_3panel_comparison.png)
+
+This figure compares three clustering approaches on UMAP-projected latent representations from [TweetyBERT](https://github.com/birdsonganalysis/tweetybert) (bird USA5288). The latent vectors are L2-normalized before clustering so that the GPU spectral methods operate on cosine similarity.
+
+- **Left — HDBSCAN** (28 labels including noise): The baseline density-based clustering. HDBSCAN finds variable-density clusters but leaves many points as noise (unlabeled) and tends to fragment sparse regions.
+
+- **Center — Cosine Spectral** (100 clusters, k=30): `TwoStageSpectral` with 100 clusters on the L2-normalized latents. Over-clustering intentionally produces many small, pure clusters that respect fine-grained spectral structure.
+
+- **Right — Cosine Overcluster + Merge** (100 → 27 clusters): The 100 spectral clusters are merged down to 27 using `merge_clusters` with transition-based similarity. File boundaries between recordings are masked so that transitions at recording edges don't create spurious merges. The result recovers coherent syllable types without noise points.
+
+**How it was generated:**
+
+The plot was produced by `plot_3panel_comparison.py` in the parent project directory. The key steps:
+
+1. Load TweetyBERT latent space and pre-computed UMAP coordinates from `USA5288.npz`
+2. L2-normalize the latent vectors (`sklearn.preprocessing.normalize`)
+3. Run `TwoStageSpectral(n_clusters=100, n_neighbors=30, n_subsample=30000).fit_predict()` on the normalized latents
+4. Merge from 100 → 27 clusters with `merge_clusters(labels, n_merge=27, boundary_mask=bmask)`, where `bmask` flags file boundaries via `boundary_mask_from_indices`
+5. Plot all three labelings (HDBSCAN, over-clustered, merged) on the same UMAP coordinates
+
 ## License
 
 MIT

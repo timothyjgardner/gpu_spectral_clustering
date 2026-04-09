@@ -18,7 +18,7 @@ from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 
 
-def build_transition_matrix(labels, seq_len=None):
+def build_transition_matrix(labels, seq_len=None, boundary_mask=None):
     """Count transitions between cluster labels at consecutive timesteps.
 
     Parameters
@@ -30,6 +30,11 @@ def build_transition_matrix(labels, seq_len=None):
         steps) are skipped. This is useful when the label sequence is
         formed by concatenating fixed-length windows that are not
         temporally contiguous. If None, all consecutive pairs are counted.
+    boundary_mask : ndarray of shape (n-1,), bool, or None
+        If provided, ``boundary_mask[t]`` is True when the transition
+        from ``labels[t]`` to ``labels[t+1]`` should be skipped (e.g.
+        because it crosses a file boundary). This generalizes ``seq_len``
+        to variable-length segments.
 
     Returns
     -------
@@ -38,8 +43,17 @@ def build_transition_matrix(labels, seq_len=None):
         the system moved from cluster i to cluster j.
     """
     k = int(labels.max()) + 1
-    T = np.zeros((k, k), dtype=np.float64)
     n = len(labels)
+
+    if boundary_mask is not None:
+        valid = ~boundary_mask
+        T = np.zeros((k, k), dtype=np.float64)
+        src = labels[:-1][valid]
+        dst = labels[1:][valid]
+        np.add.at(T, (src, dst), 1)
+        return T
+
+    T = np.zeros((k, k), dtype=np.float64)
     for t in range(n - 1):
         if seq_len is not None and (t + 1) % seq_len == 0:
             continue
@@ -122,7 +136,24 @@ def apply_merge(labels, merge_map):
     return merge_map[labels]
 
 
-def merge_clusters(labels, n_merge, seq_len=None, method='average'):
+def boundary_mask_from_indices(file_indices):
+    """Build a boundary mask from a file/segment index array.
+
+    Parameters
+    ----------
+    file_indices : ndarray of shape (n,), int
+        Segment or file index for each timestep.
+
+    Returns
+    -------
+    mask : ndarray of shape (n-1,), bool
+        True at positions where the file index changes (boundary).
+    """
+    return np.diff(file_indices) != 0
+
+
+def merge_clusters(labels, n_merge, seq_len=None, boundary_mask=None,
+                   method='average'):
     """End-to-end cluster merging: build transitions, merge, relabel.
 
     Convenience function combining ``build_transition_matrix``,
@@ -137,6 +168,10 @@ def merge_clusters(labels, n_merge, seq_len=None, method='average'):
     seq_len : int or None
         Window length for skipping boundary transitions (see
         ``build_transition_matrix``).
+    boundary_mask : ndarray of shape (n-1,), bool, or None
+        If provided, skip transitions where mask is True. Overrides
+        ``seq_len``. Use ``boundary_mask_from_indices(file_indices)``
+        to build this from a file index array.
     method : str
         Linkage method (default: 'average').
 
@@ -153,10 +188,12 @@ def merge_clusters(labels, n_merge, seq_len=None, method='average'):
         - ``'k_before'``: Number of clusters before merging.
         - ``'k_after'``: Number of clusters after merging.
     """
-    T_before = build_transition_matrix(labels, seq_len=seq_len)
+    T_before = build_transition_matrix(labels, seq_len=seq_len,
+                                       boundary_mask=boundary_mask)
     merge_map = merge_by_transitions(T_before, n_merge, method=method)
     merged_labels = apply_merge(labels, merge_map)
-    T_after = build_transition_matrix(merged_labels, seq_len=seq_len)
+    T_after = build_transition_matrix(merged_labels, seq_len=seq_len,
+                                      boundary_mask=boundary_mask)
 
     return merged_labels, {
         'T_before': T_before,
